@@ -1,0 +1,90 @@
+\documentclass{article}
+\usepackage{graphicx}
+
+\title{
+    \centering
+    \includegraphics[width = 3cm]{logoUniud.png}\\
+    {\large Corso di Internet of Things}\\
+    {\Large Relazione progetto IoT}\\
+    {\normalsize Università degli studi di Udine, A.A. 2025-2026}
+}
+
+\author{Alessandro Bolteri \texttt{[164884@spes.uniud.it]} \\
+        Willy Kelvin Junior Djangang \texttt{[165844@spes.uniud.it]}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+    \textbf{\large SISTEMA DI MONITORAGGIO AMBIENTALE}
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{\Large Introduzione}
+
+\subsection{Sommario}
+L'obiettivo di questo progetto è sviluppare un sistema di monitoraggio ambientale per una stanza di una casa o locale. Il sistema deve essere in grado di monitorare la temperatura, il livello di CO\textsubscript{2}, di umidità e notificare un segnale nel caso si superino le soglie preimpostate, attivando i segnali luminosi e sonori.
+
+\subsection{Descrizione generale e obiettivi del lavoro}
+I requisiti funzionali del sistema sono:
+\begin{enumerate}
+    \item \textbf{Controllo dei parametri} come temperatura, livello di CO\textsubscript{2}, umidità
+    \item \textbf{Attivazione di contromisure} al superamento delle soglie: LED rosso per temperatura elevata, LED verde per umidità elevata, buzzer per CO\textsubscript{2} elevata
+    \item \textbf{Persistenza dei dati} raccolti su InfluxDB
+    \item \textbf{Viasualizzazione dei dati} in tempo reale su Grafana
+\end{enumerate}
+
+\section{\Large Componenti hardware e software}
+
+\subsection{Strumenti utilizzati}
+
+\begin{itemize}
+    \item \textbf{ESP32:}\\
+    Microcontrollore responsabile dell'acquisizione dei dati dai sensori e della loro trasmissione via MQTT.
+
+    \item \textbf{Sensore di temperatura e umidità dell'aria (DHT22):}\\
+    Sensore utile alla misurazione della temperatura e umidità relativa. Collegato all'ESP32.
+
+    \item \textbf{Sensore  CO\textsubscript{2}?:}\\
+    ???
+    
+    \item \textbf{LED rosso:}\\
+    Viene usato un LED rosso per avvisare quando la temperatura supera la soglia.
+
+    \item \textbf{LED verde:}\\
+    Il LED verde viene utilizzato quando l'umidità supera la soglia
+
+    \item \textbf{Buzzer:}\\
+    Viene utilizzato un attuatore per segnalare quando viene superata la soglia di  CO\textsubscript{2}
+
+    \item \textbf{Docker:}\\
+    Piattaforma di containerizzazione usta per orchestrare i questtro serivizi del backed
+
+    \item \textbf{InfluxDB:}\\
+    Database ottimizzato per dati IoT
+
+    \item \textbf{Grafana:}\\
+    Piattaforma utile alla visualizzazione dei dati IoT
+
+
+
+
+
+
+    
+\end{itemize}
+\section{\Large Implementazione hardware}
+
+\section{\Large Implementazione software}
+
+\section{\Large Osservazioni conclusive}
+
+
+\end{document}
