@@ -1,0 +1,413 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage[italian]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{amsmath}
+\geometry{margin=2.5cm}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{gray!10},
+  frame=single,
+  breaklines=true,
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!60!black},
+  stringstyle=\color{orange},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  tabsize=2
+}
+
+\title{
+    \centering
+    \includegraphics[width=3cm]{logoUniud.png}\\
+    {\large Corso di Internet of Things}\\
+    {\Large Relazione progetto IoT}\\
+    {\normalsize Università degli studi di Udine, A.A. 2025-2026}
+}
+\author{
+  Alessandro Bolteri \texttt{[164884@spes.uniud.it]} \\
+  Willy Kelvin Junior Djangang \texttt{[165844@spes.uniud.it]}
+}
+\date{}
+
+\begin{document}
+
+\maketitle
+\begin{center}
+    \textbf{\large SISTEMA DI MONITORAGGIO AMBIENTALE}
+\end{center}
+\newpage
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────────────────────
+\section{\Large Introduzione}
+
+\subsection{Sommario}
+L'obiettivo di questo progetto è sviluppare un sistema IoT per il monitoraggio
+ambientale in tempo reale di una stanza. Il sistema acquisisce temperatura e
+concentrazione di gas, elabora i dati tramite un Decision Engine software,
+attiva contromisure locali (LED e buzzer) e rende i dati consultabili su
+dashboard Grafana.
+
+\subsection{Descrizione generale e obiettivi del lavoro}
+I requisiti funzionali del sistema sono:
+\begin{enumerate}
+    \item \textbf{Acquisizione dei parametri} ambientali: temperatura (LM35)
+          e concentrazione di gas (MQ-2), rilevati ogni 2 secondi come valori
+          ADC grezzi.
+    \item \textbf{Elaborazione tramite Decision Engine}: i valori grezzi vengono
+          filtrati, calibrati e classificati in 5 stati distinti.
+    \item \textbf{Controllo bidirezionale degli attuatori}: il Decision Engine
+          invia comandi ad Arduino via seriale per attivare LED e buzzer.
+    \item \textbf{Trasmissione dei dati} tramite protocollo MQTT su broker
+          Mosquitto locale.
+    \item \textbf{Persistenza} su InfluxDB (time-series) e su file locali
+          CSV/JSON/SQLite per analisi offline.
+    \item \textbf{Visualizzazione} in tempo reale su dashboard Grafana con
+          aggiornamento ogni 5 secondi.
+    \item \textbf{Robustezza}: filtri anti-spike, media mobile, fail-safe
+          hardware se il PC non risponde.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────
+\section{\Large Componenti hardware e software}
+
+\subsection{Strumenti utilizzati}
+
+\begin{itemize}
+
+    \item \textbf{Arduino UNO:}
+    Microcontrollore responsabile della sola acquisizione ADC e del controllo
+    fisico degli attuatori. Il firmware non prende decisioni autonome: si limita
+    ad inviare i valori grezzi via seriale e ad eseguire i comandi ricevuti.
+
+    \item \textbf{Sensore di temperatura LM35:}
+    Sensore analogico di precisione ($\pm$0.5°C). Collegato al pin A0 dell'Arduino.
+    Il segnale analogico (0--5~V) viene letto come valore ADC (0--1023) e
+    convertito in gradi Celsius dal Decision Engine tramite calibrazione empirica:
+    $T = \text{ADC} \times 0.17 + \text{offset}$.
+
+    \item \textbf{Sensore di gas MQ-2:}
+    Sensore analogico per la rilevazione di gas infiammabili, fumo e monossido
+    di carbonio. Collegato al pin A1. Il valore ADC grezzo (0--1023) viene usato
+    direttamente come indicatore di concentrazione. Richiede circa 2 minuti di
+    preriscaldamento dalla prima accensione.
+
+    \item \textbf{LED giallo (D4):}
+    Si accende in modalità lampeggiante (500~ms) quando la temperatura supera
+    la soglia (stato \texttt{TEMP\_ALARM}).
+
+    \item \textbf{LED rosso (D5):}
+    Si accende in modalità lampeggiante (500~ms) per gli stati
+    \texttt{GAS\_WARNING}, \texttt{GAS\_ALARM} e \texttt{CRITICAL}.
+
+    \item \textbf{Buzzer (D8):}
+    Emette un segnale sonoro ciclico la cui durata varia in base alla gravità
+    dello stato: 1.5~s on/off per warning, 2.5~s on/off per allarmi critici.
+
+    \item \textbf{Decision Engine (Python):}
+    Modulo software eseguito sul computer host che costituisce il nucleo
+    intelligente del sistema. Riceve i valori ADC grezzi, applica filtri,
+    calibra i sensori, stima l'umidità e classifica lo stato ambientale.
+
+    \item \textbf{Mosquitto (broker MQTT):}
+    Broker MQTT locale eseguito come container Docker sulla porta 1883.
+
+    \item \textbf{Docker e Docker Compose:}
+    Piattaforma di containerizzazione che orchestra cinque servizi del backend:
+    Mosquitto, mqtt-bridge, InfluxDB, Grafana, data-collector.
+
+    \item \textbf{InfluxDB v2:}
+    Database time-series per la persistenza dei dati dei sensori.
+
+    \item \textbf{Grafana 10.4:}
+    Dashboard di visualizzazione, configurata tramite provisioning automatico.
+
+    \item \textbf{Data Collector:}
+    Servizio Docker che salva ogni misurazione in parallelo su tre formati:
+    CSV, JSON Lines e SQLite, per analisi offline e Machine Learning.
+
+\end{itemize}
+
+\subsection{Tabella riepilogativa}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Componente} & \textbf{Ruolo} & \textbf{Collegamento} \\
+\midrule
+Arduino UNO          & Acquisizione ADC + attuatori      & USB seriale   \\
+LM35                 & Temperatura                       & A0            \\
+MQ-2                 & Gas e fumo                        & A1            \\
+LED giallo           & Allarme temperatura               & D4            \\
+LED rosso            & Allarme gas                       & D5            \\
+Buzzer               & Allarme sonoro                    & D8            \\
+Decision Engine      & Filtraggio, calibrazione, stati   & Host (Python) \\
+Serial Reader        & Ponte seriale $\rightarrow$ MQTT   & Host (Python) \\
+Mosquitto            & Broker MQTT locale                & Docker        \\
+mqtt-bridge          & MQTT $\rightarrow$ InfluxDB        & Docker        \\
+InfluxDB v2          & Persistenza time-series           & Docker        \\
+Grafana 10.4         & Dashboard                         & Docker        \\
+Data Collector       & Persistenza CSV/JSON/SQLite       & Docker        \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ─────────────────────────────────────────────────────────────
+\section{\Large Implementazione hardware}
+
+Il circuito è realizzato su breadboard con cavi jumper collegati all'Arduino UNO.
+
+\subsection{Connessioni del circuito}
+
+\begin{itemize}
+    \item \textbf{LM35:} pin VS $\rightarrow$ 5~V, pin GND $\rightarrow$ GND,
+          pin VOUT $\rightarrow$ A0.
+    \item \textbf{MQ-2:} VCC $\rightarrow$ 5~V, GND $\rightarrow$ GND,
+          AO $\rightarrow$ A1.
+    \item \textbf{LED giallo:} D4 $\rightarrow$ resistenza 220~$\Omega$
+          $\rightarrow$ anodo $\rightarrow$ catodo $\rightarrow$ GND.
+    \item \textbf{LED rosso:} D5 $\rightarrow$ resistenza 220~$\Omega$
+          $\rightarrow$ anodo $\rightarrow$ catodo $\rightarrow$ GND.
+    \item \textbf{Buzzer:} D8 $\rightarrow$ pin positivo, pin negativo
+          $\rightarrow$ GND.
+\end{itemize}
+
+Le resistenze da 220~$\Omega$ limitano la corrente sui LED a circa 10--15~mA,
+entro il limite massimo di 40~mA per pin digitale dell'Arduino UNO.
+
+\subsection{Caricamento del firmware}
+
+Il firmware è stato caricato tramite Arduino IDE selezionando la scheda
+\textit{Arduino UNO} e la porta seriale corretta (su Windows: \texttt{COM3}
+o simile; su Linux/Mac: \texttt{/dev/ttyACM0} o \texttt{/dev/cu.usbmodem...}).
+Non sono necessarie librerie esterne.
+
+% ─────────────────────────────────────────────────────────────
+\section{\Large Implementazione software}
+
+\subsection{Architettura bidirezionale}
+
+L'aspetto più caratteristico del progetto è la separazione tra acquisizione
+ed elaborazione: Arduino si occupa esclusivamente della lettura ADC e del
+controllo fisico degli attuatori, mentre tutta la logica decisionale risiede
+nel Decision Engine Python sul computer host.
+
+\begin{center}
+\texttt{LM35 + MQ-2}
+$\xrightarrow{\text{ADC}}$
+\texttt{Arduino}
+$\xrightarrow{\text{USB}}$
+\texttt{Serial Reader}
+$\xrightarrow{}$
+\texttt{Decision Engine}
+$\xrightarrow{\text{CMD}}$
+\texttt{Arduino}
+\end{center}
+
+\begin{center}
+\texttt{Decision Engine}
+$\xrightarrow{\text{MQTT}}$
+\texttt{Mosquitto}
+$\rightarrow$
+\texttt{mqtt-bridge}
+$\rightarrow$
+\texttt{InfluxDB}
+$\rightarrow$
+\texttt{Grafana}
+\end{center}
+
+Questo approccio permette di aggiornare le soglie, i filtri e la logica di
+classificazione senza ricaricare il firmware su Arduino.
+
+\subsection{Firmware Arduino (\texttt{arduino.ino})}
+
+Il firmware è ridotto al minimo necessario:
+
+\paragraph{Acquisizione.}
+Ogni 2 secondi legge i pin A0 (LM35) e A1 (MQ-2) con media su rispettivamente
+20 e 10 campioni, e invia il risultato sulla seriale:
+\begin{lstlisting}[language={}]
+TEMP_ADC:155 GAS_ADC:229
+\end{lstlisting}
+
+\paragraph{Ricezione comandi.}
+Legge in modo non-blocking i comandi inviati dal Decision Engine:
+\begin{lstlisting}[language={}]
+CMD:NORMAL / CMD:TEMP_ALARM / CMD:GAS_WARNING / CMD:GAS_ALARM / CMD:CRITICAL
+\end{lstlisting}
+
+\paragraph{Fail-safe.}
+Se il computer host non invia comandi per più di 8 secondi (timeout),
+Arduino spegne automaticamente tutti gli attuatori per sicurezza.
+
+\paragraph{Attuatori non-blocking.}
+Lampeggi e buzzer sono gestiti con \texttt{millis()} senza \texttt{delay()},
+in modo che il firmware continui a leggere i sensori e i comandi seriali
+anche durante l'attivazione degli allarmi.
+
+\subsection{Decision Engine}
+
+Il Decision Engine è composto da quattro moduli Python:
+
+\paragraph{\texttt{filters.py} — Filtri numerici.}
+\begin{itemize}
+    \item \texttt{SpikeGuard}: scarta i valori ADC fuori dall'intervallo
+          valido (20--250) sostituendoli con l'ultimo valore accettabile.
+          Evita letture errate dovute a rumore elettrico.
+    \item \texttt{MedianFilter}: media mobile su finestra di 5 campioni.
+          Stabilizza il segnale LM35 che può presentare piccole oscillazioni.
+\end{itemize}
+
+\paragraph{\texttt{calibration.py} — Conversione ADC $\rightarrow$ grandezze fisiche.}
+La temperatura viene ricavata dalla formula:
+\[
+T = \text{ADC}_\text{filtrato} \times 0.17 + \text{offset}
+\]
+I parametri \texttt{scale} e \texttt{offset} sono modificabili nel file
+\texttt{config/calibration.json} senza toccare il codice.
+
+L'umidità viene \textit{stimata} empiricamente tramite:
+\[
+H = 60.0 - (T - 25.0) + \frac{\text{GAS\_ADC}}{100}
+\]
+Questa formula produce valori realistici per la demo (circa 60\% a 25°C
+con gas a 200--300 ADC) ed è dichiarata come stima, non come misurazione
+diretta, poiché il sensore DHT11 ha presentato problemi di lettura ed è
+stato sostituito con LM35 (solo temperatura).
+
+\paragraph{\texttt{thresholds.py} — Classificazione in 5 stati.}
+
+\begin{center}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Stato} & \textbf{Temp} & \textbf{Gas ADC} & \textbf{LED} & \textbf{Buzzer} \\
+\midrule
+\texttt{NORMAL}      & $\leq 35$°C & $\leq 300$    & Spenti              & Spento         \\
+\texttt{GAS\_WARNING}& $\leq 35$°C & $301$--$400$  & Rosso lampeggia     & 1.5~s/1.5~s    \\
+\texttt{TEMP\_ALARM} & $> 35$°C    & $\leq 400$    & Giallo lampeggia    & 1.5~s/1.5~s    \\
+\texttt{GAS\_ALARM}  & $\leq 35$°C & $> 400$       & Rosso lampeggia     & 2.5~s/2.5~s    \\
+\texttt{CRITICAL}    & $> 35$°C    & $> 400$       & Entrambi lampeggiano& 2.5~s/2.5~s    \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La priorità degli stati è: \texttt{CRITICAL} $>$ \texttt{GAS\_ALARM} $>$
+\texttt{TEMP\_ALARM} $>$ \texttt{GAS\_WARNING} $>$ \texttt{NORMAL}.
+
+\paragraph{\texttt{decision\_engine.py} — Orchestrazione.}
+Coordina l'intera pipeline: riceve i valori ADC grezzi, applica SpikeGuard,
+MedianFilter, calibrazione, stima dell'umidità, classificazione dello stato
+e restituisce il comando da inviare ad Arduino e il payload MQTT.
+
+\subsection{Serial Reader (\texttt{serial\_reader.py})}
+
+Eseguito sul computer host, funge da ponte tra Arduino e il broker MQTT.
+Rileva automaticamente la porta seriale su qualsiasi sistema operativo
+(Windows: \texttt{COMx}; Linux/Mac: \texttt{/dev/ttyACM0}) tramite la
+libreria \texttt{pyserial}. Ad ogni ciclo:
+\begin{enumerate}
+    \item Legge una riga dalla seriale (\texttt{TEMP\_ADC:x GAS\_ADC:y}).
+    \item Passa i valori al Decision Engine.
+    \item Invia il comando ad Arduino sulla stessa porta seriale.
+    \item Pubblica i dati elaborati su quattro topic MQTT.
+\end{enumerate}
+
+\paragraph{Topic MQTT pubblicati:}
+\begin{itemize}
+    \item \texttt{sensors/temperature} $\rightarrow$
+          \lstinline|{"value": 25.4, "alarm": false}|
+    \item \texttt{sensors/humidity} $\rightarrow$
+          \lstinline|{"value": 61.2, "alarm": false}|
+    \item \texttt{sensors/gas} $\rightarrow$
+          \lstinline|{"value": 320, "warn": true, "alarm": false}|
+    \item \texttt{sensors/raw} $\rightarrow$ dati diagnostici completi
+          (valori ADC, stato, comando, filtri)
+\end{itemize}
+
+\subsection{Backend Docker (\texttt{docker-compose.yml})}
+
+Il backend è orchestrato tramite Docker Compose con cinque servizi:
+
+\begin{itemize}
+    \item \textbf{Mosquitto:} broker MQTT locale sulla porta 1883,
+          con persistenza su volume Docker.
+    \item \textbf{mqtt-bridge:} ascolta i tre topic principali e scrive
+          su InfluxDB. Attende 5 secondi all'avvio per garantire che
+          InfluxDB sia operativo.
+    \item \textbf{InfluxDB v2:} database time-series, inizializzato
+          automaticamente con organizzazione \texttt{iot-project} e
+          bucket \texttt{sensors}.
+    \item \textbf{Grafana 10.4:} carica datasource e dashboard automaticamente
+          al primo avvio tramite provisioning, senza configurazione manuale.
+    \item \textbf{data-collector:} ascolta \texttt{sensors/raw} e salva
+          ogni campione in tre formati paralleli (CSV, JSON Lines, SQLite)
+          nella cartella \texttt{data/}, arricchendo ogni riga con timestamp,
+          data, ora e fascia oraria (morning/afternoon/evening/night).
+\end{itemize}
+
+\subsection{Dashboard Grafana}
+
+La dashboard è caricata automaticamente tramite provisioning JSON. È composta da:
+\begin{enumerate}
+    \item Tre \textit{gauge} istantanei (temperatura, umidità, gas) con
+          soglie colorate verde/arancio/rosso.
+    \item Un grafico \textit{time-series} per la temperatura nell'ultima ora.
+    \item Due grafici \textit{time-series} affiancati per umidità e gas.
+    \item Una barra di stato con esito OK/ALLARME per ciascun sensore.
+\end{enumerate}
+
+\subsection{Data Collector e analisi offline}
+
+Il servizio \texttt{data-collector} costruisce automaticamente tre archivi:
+\begin{itemize}
+    \item \texttt{environment\_data.csv} — per fogli di calcolo e analisi
+          con strumenti come pandas.
+    \item \texttt{environment\_data.jsonl} — per pipeline di dati e streaming.
+    \item \texttt{environment\_data.sqlite} — per query SQL e integrazione
+          con strumenti di Machine Learning.
+\end{itemize}
+
+La cartella \texttt{analytics/} contiene script per analisi dei pattern
+(\texttt{analyze\_patterns.py}), verifica dello storage (\texttt{check\_storage.py})
+e addestramento di modelli predittivi (\texttt{train\_models.py}).
+
+% ─────────────────────────────────────────────────────────────
+\section{\Large Osservazioni conclusive}
+
+% DA COMPLETARE con misurazioni reali dopo i test fisici:
+%   - valori ADC medi rilevati per LM35 e MQ-2
+%   - verifica della calibrazione (confronto con termometro di riferimento)
+%   - screenshot della dashboard Grafana con dati reali
+%   - eventuali problemi riscontrati e soluzioni adottate
+
+Il progetto ha centrato gli obiettivi prefissati: acquisizione, elaborazione,
+visualizzazione e reazione automatica agli eventi ambientali, il tutto con
+componenti a basso costo (hardware sotto i 30~€) e software interamente
+open-source.
+
+Il principale ostacolo incontrato è stato il malfunzionamento del sensore
+DHT11, risolto sostituendolo con l'LM35 e stimando l'umidità via software.
+La struttura modulare del sistema ha reso questo adattamento rapido e senza
+impatto sul resto della pipeline.
+
+Possibili sviluppi futuri:
+\begin{itemize}
+    \item Sostituzione dell'LM35 con un DHT22 per la misurazione diretta
+          dell'umidità.
+    \item Configurazione delle notifiche Telegram/Teams già predisposte
+          nel codice.
+    \item Utilizzo dei dati SQLite raccolti per addestrare modelli predittivi
+          di anomalie ambientali.
+    \item Sostituzione di Arduino UNO con un ESP32 per trasmettere
+          direttamente via WiFi, eliminando la dipendenza dal computer host.
+\end{itemize}
+
+\end{document}
